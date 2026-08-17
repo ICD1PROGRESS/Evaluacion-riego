@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Entornos virtuales
+venv/
+env/
+.env
+.venv
+
+# Bases de datos locales
+*.db
+*.sqlite3
+data/saas/
+data/global.db
+data/proyectos/
+
+# Archivos de Streamlit
+.streamlit/secrets.toml
+
+# Archivos de configuración local
+*.xlsx
+*.xls
+temp_*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Otros
+.DS_Store
+Thumbs.db
