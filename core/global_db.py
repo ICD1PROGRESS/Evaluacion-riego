@@ -43,16 +43,6 @@ class GlobalDB:
     - Si no → usa SQLite local (data/global.db)
     """
 
-    def _read_sql_df(self, query, conn, params=None):
-        """Lee SQL y normaliza nombres de columnas a MAYUSCULAS para compatibilidad SQLite/PostgreSQL."""
-        if params is not None:
-            df = pd.read_sql(query, conn, params=params)
-        else:
-            df = pd.read_sql(query, conn)
-        if not df.empty and len(df.columns) > 0:
-            df.columns = [str(c).upper() for c in df.columns]
-        return df
-
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.pg_url = _env_global_db if USE_POSTGRES else None
@@ -92,11 +82,11 @@ class GlobalDB:
         # Pero como el código fuente usa ?, hacemos replace si es PostgreSQL
         if USE_POSTGRES:
             sql_pg = sql.replace("?", "%s")
-            cur = conn.cursor()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(sql_pg, params)
             return cur
         else:
-            cur = conn.cursor()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(sql, params)
             return cur
 
@@ -126,20 +116,20 @@ class GlobalDB:
         
         if USE_POSTGRES:
             # PostgreSQL DDL
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS unidad_medida (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL UNIQUE,
                     abreviatura TEXT
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS departamento (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL UNIQUE
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS municipio (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL,
@@ -147,7 +137,7 @@ class GlobalDB:
                     UNIQUE(nombre, departamento_id)
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS cultivo (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL UNIQUE,
@@ -155,7 +145,7 @@ class GlobalDB:
                     familia TEXT DEFAULT ''
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS variedad (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL,
@@ -163,13 +153,13 @@ class GlobalDB:
                     UNIQUE(nombre, cultivo_id)
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS nivel_tecnologico (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL UNIQUE
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS concepto (
                     id SERIAL PRIMARY KEY,
                     nombre TEXT NOT NULL UNIQUE,
@@ -184,7 +174,7 @@ class GlobalDB:
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS plantilla_costos (
                     id SERIAL PRIMARY KEY,
                     cultivo_id INTEGER NOT NULL REFERENCES cultivo(id),
@@ -204,7 +194,7 @@ class GlobalDB:
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS plantilla_concepto (
                     id SERIAL PRIMARY KEY,
                     plantilla_id INTEGER NOT NULL REFERENCES plantilla_costos(id) ON DELETE CASCADE,
@@ -219,7 +209,7 @@ class GlobalDB:
                     UNIQUE(plantilla_id, concepto_id)
                 )
             """)
-            cur.execute("""
+            cur = self._execute(conn, """
                 CREATE TABLE IF NOT EXISTS plantilla_gasto_general (
                     id SERIAL PRIMARY KEY,
                     plantilla_id INTEGER NOT NULL REFERENCES plantilla_costos(id) ON DELETE CASCADE,
@@ -231,9 +221,9 @@ class GlobalDB:
                 )
             """)
             # Índices
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_concepto_nombre ON concepto(nombre)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_plantilla_cultivo ON plantilla_costos(cultivo_id)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_plantilla_concepto_plantilla ON plantilla_concepto(plantilla_id)")
+            cur = self._execute(conn, "CREATE INDEX IF NOT EXISTS idx_concepto_nombre ON concepto(nombre)")
+            cur = self._execute(conn, "CREATE INDEX IF NOT EXISTS idx_plantilla_cultivo ON plantilla_costos(cultivo_id)")
+            cur = self._execute(conn, "CREATE INDEX IF NOT EXISTS idx_plantilla_concepto_plantilla ON plantilla_concepto(plantilla_id)")
         else:
             # SQLite DDL (código original)
             conn.executescript("""
@@ -370,7 +360,7 @@ class GlobalDB:
             return None
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute(f"SELECT id FROM {tabla} WHERE {campo} = ?", (valor.strip(),))
+        cur = self._execute(conn, f"SELECT id FROM {tabla} WHERE {campo} = ?", (valor.strip(),))
         row = cur.fetchone()
         conn.close()
         return row['id'] if row else None
@@ -378,7 +368,7 @@ class GlobalDB:
     def obtener_cultivos(self) -> List[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id, nombre FROM cultivo ORDER BY nombre")
+        cur = self._execute(conn, "SELECT id, nombre FROM cultivo ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -387,9 +377,9 @@ class GlobalDB:
         conn = self._get_conn()
         cur = self._cursor(conn)
         if cultivo_id:
-            cur.execute("SELECT id, nombre, cultivo_id FROM variedad WHERE cultivo_id = ? ORDER BY nombre", (cultivo_id,))
+            cur = self._execute(conn, "SELECT id, nombre, cultivo_id FROM variedad WHERE cultivo_id = ? ORDER BY nombre", (cultivo_id,))
         else:
-            cur.execute("SELECT id, nombre, cultivo_id FROM variedad ORDER BY nombre")
+            cur = self._execute(conn, "SELECT id, nombre, cultivo_id FROM variedad ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -397,7 +387,7 @@ class GlobalDB:
     def obtener_niveles_tecnologicos(self) -> List[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id, nombre FROM nivel_tecnologico ORDER BY nombre")
+        cur = self._execute(conn, "SELECT id, nombre FROM nivel_tecnologico ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -405,7 +395,7 @@ class GlobalDB:
     def obtener_departamentos(self) -> List[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id, nombre FROM departamento ORDER BY nombre")
+        cur = self._execute(conn, "SELECT id, nombre FROM departamento ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -414,9 +404,9 @@ class GlobalDB:
         conn = self._get_conn()
         cur = self._cursor(conn)
         if depto_id:
-            cur.execute("SELECT id, nombre, departamento_id FROM municipio WHERE departamento_id = ? ORDER BY nombre", (depto_id,))
+            cur = self._execute(conn, "SELECT id, nombre, departamento_id FROM municipio WHERE departamento_id = ? ORDER BY nombre", (depto_id,))
         else:
-            cur.execute("SELECT id, nombre, departamento_id FROM municipio ORDER BY nombre")
+            cur = self._execute(conn, "SELECT id, nombre, departamento_id FROM municipio ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -424,7 +414,7 @@ class GlobalDB:
     def obtener_unidades(self) -> List[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id, nombre, abreviatura FROM unidad_medida ORDER BY nombre")
+        cur = self._execute(conn, "SELECT id, nombre, abreviatura FROM unidad_medida ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [self._row_to_dict(row) for row in rows]
@@ -439,12 +429,12 @@ class GlobalDB:
             raise ValueError("El nombre del cultivo es obligatorio")
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id FROM cultivo WHERE nombre = ?", (nombre,))
+        cur = self._execute(conn, "SELECT id FROM cultivo WHERE nombre = ?", (nombre,))
         row = cur.fetchone()
         if row:
             conn.close()
             return row['id']
-        cur.execute("INSERT INTO cultivo (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO cultivo (nombre) VALUES (?)", (nombre,))
+        cur = self._execute(conn, "INSERT INTO cultivo (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO cultivo (nombre) VALUES (?)", (nombre,))
         if USE_POSTGRES:
             cid = cur.fetchone()['id']
         else:
@@ -459,12 +449,12 @@ class GlobalDB:
             return None
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id FROM variedad WHERE nombre = ? AND cultivo_id = ?", (nombre, cultivo_id))
+        cur = self._execute(conn, "SELECT id FROM variedad WHERE nombre = ? AND cultivo_id = ?", (nombre, cultivo_id))
         row = cur.fetchone()
         if row:
             conn.close()
             return row['id']
-        cur.execute("INSERT INTO variedad (nombre, cultivo_id) VALUES (?, ?) RETURNING id" if USE_POSTGRES else "INSERT INTO variedad (nombre, cultivo_id) VALUES (?, ?)", (nombre, cultivo_id))
+        cur = self._execute(conn, "INSERT INTO variedad (nombre, cultivo_id) VALUES (?, ?) RETURNING id" if USE_POSTGRES else "INSERT INTO variedad (nombre, cultivo_id) VALUES (?, ?)", (nombre, cultivo_id))
         if USE_POSTGRES:
             vid = cur.fetchone()['id']
         else:
@@ -479,12 +469,12 @@ class GlobalDB:
             raise ValueError("El nombre del departamento es obligatorio")
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id FROM departamento WHERE nombre = ?", (nombre,))
+        cur = self._execute(conn, "SELECT id FROM departamento WHERE nombre = ?", (nombre,))
         row = cur.fetchone()
         if row:
             conn.close()
             return row['id']
-        cur.execute("INSERT INTO departamento (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO departamento (nombre) VALUES (?)", (nombre,))
+        cur = self._execute(conn, "INSERT INTO departamento (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO departamento (nombre) VALUES (?)", (nombre,))
         if USE_POSTGRES:
             did = cur.fetchone()['id']
         else:
@@ -499,12 +489,12 @@ class GlobalDB:
             return None
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id FROM municipio WHERE nombre = ? AND departamento_id = ?", (nombre, departamento_id))
+        cur = self._execute(conn, "SELECT id FROM municipio WHERE nombre = ? AND departamento_id = ?", (nombre, departamento_id))
         row = cur.fetchone()
         if row:
             conn.close()
             return row['id']
-        cur.execute("INSERT INTO municipio (nombre, departamento_id) VALUES (?, ?) RETURNING id" if USE_POSTGRES else "INSERT INTO municipio (nombre, departamento_id) VALUES (?, ?)", (nombre, departamento_id))
+        cur = self._execute(conn, "INSERT INTO municipio (nombre, departamento_id) VALUES (?, ?) RETURNING id" if USE_POSTGRES else "INSERT INTO municipio (nombre, departamento_id) VALUES (?, ?)", (nombre, departamento_id))
         if USE_POSTGRES:
             mid = cur.fetchone()['id']
         else:
@@ -519,12 +509,12 @@ class GlobalDB:
             raise ValueError("El nivel tecnológico es obligatorio")
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT id FROM nivel_tecnologico WHERE nombre = ?", (nombre,))
+        cur = self._execute(conn, "SELECT id FROM nivel_tecnologico WHERE nombre = ?", (nombre,))
         row = cur.fetchone()
         if row:
             conn.close()
             return row['id']
-        cur.execute("INSERT INTO nivel_tecnologico (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO nivel_tecnologico (nombre) VALUES (?)", (nombre,))
+        cur = self._execute(conn, "INSERT INTO nivel_tecnologico (nombre) VALUES (?) RETURNING id" if USE_POSTGRES else "INSERT INTO nivel_tecnologico (nombre) VALUES (?)", (nombre,))
         if USE_POSTGRES:
             nid = cur.fetchone()['id']
         else:
@@ -537,7 +527,7 @@ class GlobalDB:
     def obtener_nombre_cultivo(self, cultivo_id: int) -> str:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM cultivo WHERE id = ?", (cultivo_id,))
+        cur = self._execute(conn, "SELECT nombre FROM cultivo WHERE id = ?", (cultivo_id,))
         row = cur.fetchone()
         conn.close()
         return row['nombre'] if row else ""
@@ -547,7 +537,7 @@ class GlobalDB:
             return ""
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM variedad WHERE id = ?", (variedad_id,))
+        cur = self._execute(conn, "SELECT nombre FROM variedad WHERE id = ?", (variedad_id,))
         row = cur.fetchone()
         conn.close()
         return row['nombre'] if row else ""
@@ -555,7 +545,7 @@ class GlobalDB:
     def obtener_nombre_departamento(self, depto_id: int) -> str:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM departamento WHERE id = ?", (depto_id,))
+        cur = self._execute(conn, "SELECT nombre FROM departamento WHERE id = ?", (depto_id,))
         row = cur.fetchone()
         conn.close()
         return row['nombre'] if row else ""
@@ -565,7 +555,7 @@ class GlobalDB:
             return ""
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM municipio WHERE id = ?", (municipio_id,))
+        cur = self._execute(conn, "SELECT nombre FROM municipio WHERE id = ?", (municipio_id,))
         row = cur.fetchone()
         conn.close()
         return row['nombre'] if row else ""
@@ -573,7 +563,7 @@ class GlobalDB:
     def obtener_nombre_nivel_tecnologico(self, nivel_id: int) -> str:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM nivel_tecnologico WHERE id = ?", (nivel_id,))
+        cur = self._execute(conn, "SELECT nombre FROM nivel_tecnologico WHERE id = ?", (nivel_id,))
         row = cur.fetchone()
         conn.close()
         return row['nombre'] if row else ""
@@ -599,7 +589,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             ORDER BY c.categoria, c.nombre
         """
-        df = self._read_sql_df(query, conn)
+        df = pd.read_sql(query, conn)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -612,7 +602,7 @@ class GlobalDB:
     def obtener_concepto_por_nombre(self, nombre: str) -> Optional[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT * FROM concepto WHERE nombre = ?", (nombre,))
+        cur = self._execute(conn, "SELECT * FROM concepto WHERE nombre = ?", (nombre,))
         row = cur.fetchone()
         conn.close()
         return self._row_to_dict(row)
@@ -635,7 +625,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             WHERE c.nombre IN ({placeholders})
         """
-        df = self._read_sql_df(query, conn, params=nombres)
+        df = pd.read_sql(query, conn, params=nombres)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -651,14 +641,14 @@ class GlobalDB:
             unidad_nombre = datos.get('UNIDAD', '').strip()
             unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre) if unidad_nombre else None
             if not unidad_id:
-                cur.execute("INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre or 'Unidad',))
+                cur = self._execute(conn, "INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre or 'Unidad',))
                 if USE_POSTGRES:
                     conn.commit()
                 unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre or 'Unidad')
             if not unidad_id:
                 unidad_id = 1
             
-            cur.execute("""
+            cur = self._execute(conn, """
                 INSERT INTO concepto 
                 (nombre, unidad_id, categoria, clase_rpc, precio_referencial, 
                  lugar, cultivo_asociado, observaciones)
@@ -700,7 +690,7 @@ class GlobalDB:
                 unidad_nombre = datos['UNIDAD'].strip()
                 unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre) if unidad_nombre else None
                 if not unidad_id and unidad_nombre:
-                    cur.execute("INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre,))
+                    cur = self._execute(conn, "INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre,))
                     if USE_POSTGRES:
                         conn.commit()
                     unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre)
@@ -719,7 +709,7 @@ class GlobalDB:
             if not campos:
                 return False
             valores.append(id)
-            cur.execute(f"UPDATE concepto SET {', '.join(campos)} WHERE id = ?", tuple(valores))
+            cur = self._execute(conn, f"UPDATE concepto SET {', '.join(campos)} WHERE id = ?", tuple(valores))
             conn.commit()
             conn.close()
             return True
@@ -731,7 +721,7 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("DELETE FROM concepto WHERE id = ?", (id,))
+            cur = self._execute(conn, "DELETE FROM concepto WHERE id = ?", (id,))
             conn.commit()
             conn.close()
             return True
@@ -751,7 +741,7 @@ class GlobalDB:
                 unidad_nombre = str(row.get('UNIDAD', '')).strip()
                 unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre) if unidad_nombre else None
                 if not unidad_id and unidad_nombre:
-                    cur.execute("INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre,))
+                    cur = self._execute(conn, "INSERT INTO unidad_medida (nombre) VALUES (?) ON CONFLICT (nombre) DO NOTHING" if USE_POSTGRES else "INSERT OR IGNORE INTO unidad_medida (nombre) VALUES (?)", (unidad_nombre,))
                     if USE_POSTGRES:
                         conn.commit()
                     unidad_id = self._get_id('unidad_medida', 'nombre', unidad_nombre)
@@ -765,7 +755,7 @@ class GlobalDB:
                 observaciones = str(row.get('OBSERVACIONES', '')).strip()
 
                 if id_val and isinstance(id_val, (int, float)):
-                    cur.execute("""
+                    cur = self._execute(conn, """
                         UPDATE concepto SET
                             nombre = ?, unidad_id = ?, precio_referencial = ?,
                             categoria = ?, clase_rpc = ?, lugar = ?,
@@ -774,7 +764,7 @@ class GlobalDB:
                     """, (concepto, unidad_id, precio, categoria, clase_rpc, lugar,
                           cultivo_asoc, observaciones, id_val))
                 else:
-                    cur.execute("""
+                    cur = self._execute(conn, """
                         INSERT INTO concepto
                         (nombre, unidad_id, precio_referencial, categoria, clase_rpc,
                          lugar, cultivo_asociado, observaciones)
@@ -825,7 +815,7 @@ class GlobalDB:
         if solo_activas:
             query += " WHERE p.activo = " + ("TRUE" if USE_POSTGRES else "1")
         query += " ORDER BY c.nombre, nt.nombre, d.nombre, m.nombre"
-        df = self._read_sql_df(query, conn)
+        df = pd.read_sql(query, conn)
         conn.close()
         for col in ['CULTIVO', 'VARIEDAD', 'NIVEL_TECNOLOGICO', 'DEPARTAMENTO', 'MUNICIPIO', 'CAMPANIA', 'FUENTE']:
             if col in df.columns:
@@ -839,7 +829,7 @@ class GlobalDB:
     def obtener_plantilla_por_id(self, plantilla_id: int) -> Optional[Dict]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT * FROM plantilla_costos WHERE id = ?", (plantilla_id,))
+        cur = self._execute(conn, "SELECT * FROM plantilla_costos WHERE id = ?", (plantilla_id,))
         row = cur.fetchone()
         conn.close()
         return self._row_to_dict(row)
@@ -848,7 +838,7 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("""
+            cur = self._execute(conn, """
                 INSERT INTO plantilla_costos
                 (cultivo_id, variedad_id, nivel_tecnologico_id, departamento_id, municipio_id,
                  campania, rendimiento_sp, rendimiento_cp, precio_ref_bs_ton, perdidas_sp_pct, perdidas_cp_pct, fuente)
@@ -899,7 +889,7 @@ class GlobalDB:
             if not campos:
                 return False
             valores.append(plantilla_id)
-            cur.execute(f"UPDATE plantilla_costos SET {', '.join(campos)} WHERE id = ?", tuple(valores))
+            cur = self._execute(conn, f"UPDATE plantilla_costos SET {', '.join(campos)} WHERE id = ?", tuple(valores))
             conn.commit()
             conn.close()
             return True
@@ -911,7 +901,7 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("DELETE FROM plantilla_costos WHERE id = ?", (plantilla_id,))
+            cur = self._execute(conn, "DELETE FROM plantilla_costos WHERE id = ?", (plantilla_id,))
             conn.commit()
             conn.close()
             return True
@@ -944,7 +934,7 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = self._read_sql_df(query, conn, params=(plantilla_id,))
+        df = pd.read_sql(query, conn, params=(plantilla_id,))
         conn.close()
         if not df.empty:
             for col in ['CANTIDAD', 'CANTIDAD_CP', 'PRECIO_UNITARIO', 'PRECIO_OVERRIDE']:
@@ -959,9 +949,9 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("DELETE FROM plantilla_concepto WHERE plantilla_id = ?", (plantilla_id,))
+            cur = self._execute(conn, "DELETE FROM plantilla_concepto WHERE plantilla_id = ?", (plantilla_id,))
             for idx, c_id in enumerate(conceptos_ids):
-                cur.execute("""
+                cur = self._execute(conn, """
                     INSERT INTO plantilla_concepto
                     (plantilla_id, concepto_id, cantidad, cantidad_cp, orden)
                     VALUES (?, ?, ?, ?, ?)
@@ -977,7 +967,7 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("""
+            cur = self._execute(conn, """
                 UPDATE plantilla_concepto
                 SET cantidad = ?, precio_override = ?, observaciones = ?
                 WHERE id = ?
@@ -995,7 +985,7 @@ class GlobalDB:
 
     def obtener_gastos_generales(self, plantilla_id: int) -> pd.DataFrame:
         conn = self._get_conn()
-        df = self._read_sql_df("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", conn, params=(plantilla_id,))
+        df = pd.read_sql("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", conn, params=(plantilla_id,))
         conn.close()
         return df
 
@@ -1004,7 +994,7 @@ class GlobalDB:
             conn = self._get_conn()
             cur = self._cursor(conn)
             if USE_POSTGRES:
-                cur.execute("""
+                cur = self._execute(conn, """
                     INSERT INTO plantilla_gasto_general (plantilla_id, tipo, porcentaje, monto_fijo, base_calculo, descripcion)
                     VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT (id) DO UPDATE SET
@@ -1015,7 +1005,7 @@ class GlobalDB:
                         descripcion = EXCLUDED.descripcion
                 """, (plantilla_id, tipo, porcentaje, monto_fijo, base_calculo, descripcion))
             else:
-                cur.execute("""
+                cur = self._execute(conn, """
                     INSERT OR REPLACE INTO plantilla_gasto_general
                     (plantilla_id, tipo, porcentaje, monto_fijo, base_calculo, descripcion)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -1031,7 +1021,7 @@ class GlobalDB:
         try:
             conn = self._get_conn()
             cur = self._cursor(conn)
-            cur.execute("DELETE FROM plantilla_gasto_general WHERE id = ?", (id,))
+            cur = self._execute(conn, "DELETE FROM plantilla_gasto_general WHERE id = ?", (id,))
             conn.commit()
             conn.close()
             return True
@@ -1046,7 +1036,7 @@ class GlobalDB:
     def obtener_cultivos_disponibles(self) -> List[str]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM cultivo ORDER BY nombre")
+        cur = self._execute(conn, "SELECT nombre FROM cultivo ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [row['nombre'] for row in rows]
@@ -1054,7 +1044,7 @@ class GlobalDB:
     def obtener_nombres_conceptos(self) -> List[str]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM concepto ORDER BY nombre")
+        cur = self._execute(conn, "SELECT nombre FROM concepto ORDER BY nombre")
         rows = cur.fetchall()
         conn.close()
         return [row['nombre'] for row in rows]
@@ -1062,7 +1052,7 @@ class GlobalDB:
     def obtener_conceptos_por_categoria(self, categoria: str) -> List[str]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT nombre FROM concepto WHERE categoria = ? ORDER BY nombre", (categoria.upper(),))
+        cur = self._execute(conn, "SELECT nombre FROM concepto WHERE categoria = ? ORDER BY nombre", (categoria.upper(),))
         rows = cur.fetchall()
         conn.close()
         return [row['nombre'] for row in rows]
@@ -1070,7 +1060,7 @@ class GlobalDB:
     def get_categoria_conceptos_dict(self) -> Dict[str, List[str]]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("SELECT categoria, nombre FROM concepto ORDER BY categoria, nombre")
+        cur = self._execute(conn, "SELECT categoria, nombre FROM concepto ORDER BY categoria, nombre")
         rows = cur.fetchall()
         conn.close()
         result = {}
@@ -1084,7 +1074,7 @@ class GlobalDB:
     def get_cultivos_con_variedades(self) -> Dict[str, List[str]]:
         conn = self._get_conn()
         cur = self._cursor(conn)
-        cur.execute("""
+        cur = self._execute(conn, """
             SELECT c.nombre as cultivo, v.nombre as variedad
             FROM cultivo c
             LEFT JOIN variedad v ON c.id = v.cultivo_id
@@ -1134,7 +1124,7 @@ class GlobalDB:
                 OR c.cultivo_asociado IS NULL
             ORDER BY c.categoria, c.nombre
         """
-        df = self._read_sql_df(query, conn, params=(primera, primera, primera))
+        df = pd.read_sql(query, conn, params=(primera, primera, primera))
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -1177,7 +1167,7 @@ class GlobalDB:
             params = (primera, primera, primera, lugar)
         else:
             return self.obtener_conceptos_por_cultivo(cultivo_nombre)
-        df = self._read_sql_df(query, conn, params=params)
+        df = pd.read_sql(query, conn, params=params)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -1205,7 +1195,7 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = self._read_sql_df(query, conn, params=(plantilla_id,))
+        df = pd.read_sql(query, conn, params=(plantilla_id,))
         conn.close()
         if not df.empty:
             df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(1.0)
@@ -1233,7 +1223,7 @@ class GlobalDB:
                     cantidad_cp = float(cantidad_cp_raw)
                 precio_ov = float(row.get('PRECIO_OVERRIDE', 0) or 0)
                 obs = str(row.get('OBSERVACIONES', ''))
-                cur.execute("""
+                cur = self._execute(conn, """
                     UPDATE plantilla_concepto
                     SET cantidad = ?, cantidad_cp = ?, precio_override = ?, observaciones = ?
                     WHERE id = ? AND plantilla_id = ?
