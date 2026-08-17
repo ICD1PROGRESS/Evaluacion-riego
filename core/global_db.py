@@ -6,6 +6,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv()
+
 # ============================================================
 # DETECCIÓN AUTOMÁTICA DE BASE DE DATOS
 # ============================================================
@@ -75,20 +76,26 @@ class GlobalDB:
         if USE_POSTGRES:
             return dict(row)
         return dict(row)
-
+        
     def _execute(self, conn, sql: str, params: tuple = ()):
-        """Ejecuta SQL adaptando placeholders automáticamente."""
-        # En SQLite usamos ?, en PostgreSQL %s
-        # Pero como el código fuente usa ?, hacemos replace si es PostgreSQL
         if USE_POSTGRES:
-            sql_pg = sql.replace("?", "%s")
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(sql_pg, params)
-            return cur
-        else:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(sql, params)
-            return cur
+            sql = sql.replace("?", "%s")
+
+        cur = self._cursor(conn)
+        cur.execute(sql, params)
+        return cur
+        
+    def _read_sql(self, query: str, params=None) -> pd.DataFrame:
+        conn = self._get_conn()
+        try:
+            sql = query.replace("?", "%s") if USE_POSTGRES else query
+            df = pd.read_sql(sql, conn, params=params)
+        finally:
+            conn.close()
+
+        # Normalización de columnas a MAYÚSCULAS
+        df.columns = [str(c).upper() for c in df.columns]
+        return df
 
     def _executemany(self, conn, sql: str, params_list: List[tuple]):
         if USE_POSTGRES:
@@ -573,7 +580,6 @@ class GlobalDB:
     # ============================================================
 
     def listar_conceptos(self) -> pd.DataFrame:
-        conn = self._get_conn()
         query = """
             SELECT 
                 c.id,
@@ -589,8 +595,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             ORDER BY c.categoria, c.nombre
         """
-        df = pd.read_sql(query, conn)
-        conn.close()
+        df = self._read_sql(query)
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
             string_cols = ['CONCEPTO', 'UNIDAD', 'CATEGORIA', 'CLASE_RPC', 'LUGAR', 'CULTIVO', 'OBSERVACIONES']
@@ -611,7 +616,6 @@ class GlobalDB:
         if not nombres:
             return pd.DataFrame()
         placeholders = ','.join(['?'] * len(nombres))
-        conn = self._get_conn()
         query = f"""
             SELECT 
                 c.id,
@@ -625,8 +629,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             WHERE c.nombre IN ({placeholders})
         """
-        df = pd.read_sql(query, conn, params=nombres)
-        conn.close()
+        df = self._read_sql(query, params=nombres)
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
             for col in ['CONCEPTO', 'UNIDAD', 'CATEGORIA', 'CLASE_RPC', 'OBSERVACIONES']:
@@ -734,7 +737,7 @@ class GlobalDB:
             conn = self._get_conn()
             cur = self._cursor(conn)
             for _, row in df.iterrows():
-                id_val = row.get('id')
+                id_val = row.get('ID')
                 concepto = str(row.get('CONCEPTO', '')).strip()
                 if not concepto:
                     continue
@@ -788,7 +791,6 @@ class GlobalDB:
     # CRUD PLANTILLAS
     # ============================================================
     def listar_plantillas(self, solo_activas: bool = True) -> pd.DataFrame:
-        conn = self._get_conn()
         query = """
             SELECT 
                 p.id,
@@ -815,8 +817,8 @@ class GlobalDB:
         if solo_activas:
             query += " WHERE p.activo = " + ("TRUE" if USE_POSTGRES else "1")
         query += " ORDER BY c.nombre, nt.nombre, d.nombre, m.nombre"
-        df = pd.read_sql(query, conn)
-        conn.close()
+        
+        df = self._read_sql(query)
         for col in ['CULTIVO', 'VARIEDAD', 'NIVEL_TECNOLOGICO', 'DEPARTAMENTO', 'MUNICIPIO', 'CAMPANIA', 'FUENTE']:
             if col in df.columns:
                 df[col] = df[col].fillna('').astype(str)
@@ -913,7 +915,6 @@ class GlobalDB:
     # RELACIONES PLANTILLA ↔ CONCEPTOS
     # ============================================================
     def obtener_conceptos_de_plantilla(self, plantilla_id: int) -> pd.DataFrame:
-        conn = self._get_conn()
         query = """
             SELECT 
                 pc.id as rel_id,
@@ -934,8 +935,7 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(plantilla_id,))
-        conn.close()
+        df = self._read_sql(query, params=(plantilla_id,))
         if not df.empty:
             for col in ['CANTIDAD', 'CANTIDAD_CP', 'PRECIO_UNITARIO', 'PRECIO_OVERRIDE']:
                 if col in df.columns:
@@ -984,9 +984,8 @@ class GlobalDB:
     # ============================================================
 
     def obtener_gastos_generales(self, plantilla_id: int) -> pd.DataFrame:
-        conn = self._get_conn()
-        df = pd.read_sql("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", conn, params=(plantilla_id,))
-        conn.close()
+
+        df = self._read_sql("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", params=(plantilla_id,))
         return df
 
     def guardar_gasto_general(self, plantilla_id: int, tipo: str, porcentaje: float = 0, monto_fijo: float = 0, base_calculo: str = 'directo', descripcion: str = '') -> bool:
@@ -1102,7 +1101,7 @@ class GlobalDB:
         primera = cultivo_nombre.split()[0].strip().lower()
         if not primera:
             return self.listar_conceptos()
-        conn = self._get_conn()
+        
         query = """
             SELECT 
                 c.id,
@@ -1117,15 +1116,20 @@ class GlobalDB:
             FROM concepto c
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             WHERE 
-                LOWER(c.cultivo_asociado) LIKE (? || ' %')
-                OR LOWER(c.cultivo_asociado) LIKE (? || ',%')
+                LOWER(c.cultivo_asociado) LIKE ?
+                OR LOWER(c.cultivo_asociado) LIKE ?
                 OR LOWER(c.cultivo_asociado) = ?
                 OR c.cultivo_asociado = ''
                 OR c.cultivo_asociado IS NULL
             ORDER BY c.categoria, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(primera, primera, primera))
-        conn.close()
+        params = (
+            f"{primera} %",
+            f"{primera},%",
+            primera
+        )
+        df = self._read_sql(query, params=params)        
+
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
             for col in ['CONCEPTO', 'UNIDAD', 'CATEGORIA', 'CLASE_RPC', 'LUGAR', 'CULTIVO', 'OBSERVACIONES']:
@@ -1138,7 +1142,7 @@ class GlobalDB:
             return self.listar_conceptos()
         primera = cultivo_nombre.split()[0].strip().lower()
         lugar = lugar.strip().lower()
-        conn = self._get_conn()
+
         if lugar:
             query = """
                 SELECT 
@@ -1154,21 +1158,26 @@ class GlobalDB:
                 FROM concepto c
                 LEFT JOIN unidad_medida u ON c.unidad_id = u.id
                 WHERE 
-                    (LOWER(c.cultivo_asociado) LIKE (? || ' %')
-                     OR LOWER(c.cultivo_asociado) LIKE (? || ',%')
+                    (LOWER(c.cultivo_asociado) LIKE ?
+                     OR LOWER(c.cultivo_asociado) LIKE ?
                      OR LOWER(c.cultivo_asociado) = ?
                      OR c.cultivo_asociado = ''
                      OR c.cultivo_asociado IS NULL)
-                    AND (LOWER(c.lugar) LIKE ('%' || ? || '%')
+                    AND (LOWER(c.lugar) LIKE ?
                          OR c.lugar = ''
                          OR c.lugar IS NULL)
                 ORDER BY c.categoria, c.nombre
             """
-            params = (primera, primera, primera, lugar)
+            params = (
+                f"{primera} %",
+                f"{primera},%",
+                primera,
+                f"%{lugar}%"
+            )            
+            #params = (primera, primera, primera, lugar)
         else:
             return self.obtener_conceptos_por_cultivo(cultivo_nombre)
-        df = pd.read_sql(query, conn, params=params)
-        conn.close()
+        df = self._read_sql(query, params=params)
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
             for col in ['CONCEPTO', 'UNIDAD', 'CATEGORIA', 'CLASE_RPC', 'LUGAR', 'CULTIVO', 'OBSERVACIONES']:
@@ -1177,7 +1186,6 @@ class GlobalDB:
         return df
 
     def obtener_conceptos_de_plantilla_para_calculo(self, plantilla_id: int) -> pd.DataFrame:
-        conn = self._get_conn()
         query = """
             SELECT 
                 c.nombre as CONCEPTO,
@@ -1195,8 +1203,8 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(plantilla_id,))
-        conn.close()
+        df = self._read_sql(query, params=(plantilla_id,))
+
         if not df.empty:
             df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(1.0)
             df['CANTIDAD_CP'] = pd.to_numeric(df['CANTIDAD_CP'], errors='coerce')
@@ -1212,7 +1220,7 @@ class GlobalDB:
             conn = self._get_conn()
             cur = self._cursor(conn)
             for _, row in df.iterrows():
-                rel_id = row.get('rel_id')
+                rel_id = row.get('REL_ID')
                 if pd.isna(rel_id):
                     continue
                 cantidad = float(row.get('CANTIDAD', 1.0) or 1.0)
