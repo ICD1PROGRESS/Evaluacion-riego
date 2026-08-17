@@ -1058,7 +1058,7 @@ def render_gestion_referencia():
                         label += f" - {row['MUNICIPIO']}"
                     if row.get('CAMPANIA'):
                         label += f" ({row['CAMPANIA']})"
-                    opciones[label] = int(row['id'])
+                    opciones[label] = int(row['ID'])
 
                 sel_label = st.selectbox("Seleccionar plantilla para editar o eliminar",
                                          list(opciones.keys()), key="ref_sel_plantilla")
@@ -1308,7 +1308,7 @@ def render_asignacion_calculo():
         lambda row: f"{row['CULTIVO']} ({row['NIVEL_TECNOLOGICO']}) - {row['DEPARTAMENTO']}",
         axis=1
     ).tolist()
-    plantilla_ids = df_plantillas['id'].tolist()
+    plantilla_ids = df_plantillas['ID'].tolist()
     plantilla_map = dict(zip(plantilla_opts, plantilla_ids))
 
     sel_label = st.selectbox("Seleccionar plantilla", plantilla_opts, key="calc_plantilla")
