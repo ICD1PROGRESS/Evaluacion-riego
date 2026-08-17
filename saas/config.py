@@ -84,7 +84,7 @@ STREAMLIT_SERVER_PORT = int(get_secret("STREAMLIT_SERVER_PORT", "8501"))
 STREAMLIT_SERVER_ADDRESS = get_secret("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
 
 # --- Modo Debug ---
-DEBUG = get_secret("DEBUG", "false").lower() in ("true", "1", "yes", "on")
+DEBUG = str(get_secret("DEBUG", "false")).lower() in ("true", "1", "yes", "on")
 
 # --- Validación de seguridad en producción ---
 if IS_PRODUCTION and SECRET_KEY == "riego-saas-clave-secreta-por-defecto-2026":
