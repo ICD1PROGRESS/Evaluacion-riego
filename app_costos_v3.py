@@ -1445,7 +1445,7 @@ def render_asignacion_calculo():
 
     df_asignados = global_db.obtener_conceptos_de_plantilla(plantilla_id)
     if not df_asignados.empty:
-        cols_edit = ['rel_id', 'CONCEPTO', 'UNIDAD', 'CANTIDAD', 'CANTIDAD_CP',
+        cols_edit = ['REL_ID', 'CONCEPTO', 'UNIDAD', 'CANTIDAD', 'CANTIDAD_CP',
                      'PRECIO_UNITARIO', 'PRECIO_OVERRIDE', 'CATEGORIA', 'CLASE_RPC', 'OBSERVACIONES']
         cols_existen = [c for c in cols_edit if c in df_asignados.columns]
         df_edit = df_asignados[cols_existen].copy()
@@ -1466,7 +1466,7 @@ def render_asignacion_calculo():
             num_rows="fixed",
             key=f"editor_asignados_{plantilla_id}",
             column_config={
-                "rel_id": st.column_config.NumberColumn("ID Rel", disabled=True),
+                "REL_ID": st.column_config.NumberColumn("ID Rel", disabled=True),
                 "CONCEPTO": st.column_config.TextColumn("Concepto", disabled=True),
                 "UNIDAD": st.column_config.TextColumn("Unidad", disabled=True),
                 "CANTIDAD": st.column_config.NumberColumn("Cantidad SP", min_value=0.0, step=0.1,
