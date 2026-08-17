@@ -43,6 +43,16 @@ class GlobalDB:
     - Si no → usa SQLite local (data/global.db)
     """
 
+    def _read_sql_df(self, query, conn, params=None):
+        """Lee SQL y normaliza nombres de columnas a MAYUSCULAS para compatibilidad SQLite/PostgreSQL."""
+        if params is not None:
+            df = pd.read_sql(query, conn, params=params)
+        else:
+            df = pd.read_sql(query, conn)
+        if not df.empty and len(df.columns) > 0:
+            df.columns = [str(c).upper() for c in df.columns]
+        return df
+
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.pg_url = _env_global_db if USE_POSTGRES else None
@@ -589,8 +599,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             ORDER BY c.categoria, c.nombre
         """
-        df = pd.read_sql(query, conn)
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -626,8 +635,7 @@ class GlobalDB:
             LEFT JOIN unidad_medida u ON c.unidad_id = u.id
             WHERE c.nombre IN ({placeholders})
         """
-        df = pd.read_sql(query, conn, params=nombres)
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn, params=nombres)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -817,8 +825,7 @@ class GlobalDB:
         if solo_activas:
             query += " WHERE p.activo = " + ("TRUE" if USE_POSTGRES else "1")
         query += " ORDER BY c.nombre, nt.nombre, d.nombre, m.nombre"
-        df = pd.read_sql(query, conn)
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn)
         conn.close()
         for col in ['CULTIVO', 'VARIEDAD', 'NIVEL_TECNOLOGICO', 'DEPARTAMENTO', 'MUNICIPIO', 'CAMPANIA', 'FUENTE']:
             if col in df.columns:
@@ -937,8 +944,7 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(plantilla_id,))
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn, params=(plantilla_id,))
         conn.close()
         if not df.empty:
             for col in ['CANTIDAD', 'CANTIDAD_CP', 'PRECIO_UNITARIO', 'PRECIO_OVERRIDE']:
@@ -989,8 +995,7 @@ class GlobalDB:
 
     def obtener_gastos_generales(self, plantilla_id: int) -> pd.DataFrame:
         conn = self._get_conn()
-        df = pd.read_sql("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", conn, params=(plantilla_id,))
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df("SELECT * FROM plantilla_gasto_general WHERE plantilla_id = ?", conn, params=(plantilla_id,))
         conn.close()
         return df
 
@@ -1129,8 +1134,7 @@ class GlobalDB:
                 OR c.cultivo_asociado IS NULL
             ORDER BY c.categoria, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(primera, primera, primera))
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn, params=(primera, primera, primera))
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -1173,8 +1177,7 @@ class GlobalDB:
             params = (primera, primera, primera, lugar)
         else:
             return self.obtener_conceptos_por_cultivo(cultivo_nombre)
-        df = pd.read_sql(query, conn, params=params)
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn, params=params)
         conn.close()
         if not df.empty:
             df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce').fillna(0)
@@ -1202,8 +1205,7 @@ class GlobalDB:
             WHERE pc.plantilla_id = ?
             ORDER BY pc.orden, c.nombre
         """
-        df = pd.read_sql(query, conn, params=(plantilla_id,))
-        df.columns = [c.upper() for c in df.columns]
+        df = self._read_sql_df(query, conn, params=(plantilla_id,))
         conn.close()
         if not df.empty:
             df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(1.0)
